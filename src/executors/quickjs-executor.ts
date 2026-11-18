@@ -52,11 +52,12 @@ export class QuickJSExecutor implements CodeExecutor {
     const deadline = performance.now() + this.options.timeoutMs;
     const control = AbortSignal.any([signal, AbortSignal.timeout(this.options.timeoutMs)]);
     let isFinalAnswer = false;
+    let executingAction = true;
     let output: JsonValue = null;
     let calls = 0;
     const logs: string[] = [];
     runtime.setInterruptHandler(
-      () => isFinalAnswer || control.aborted || performance.now() >= deadline,
+      () => (executingAction && isFinalAnswer) || control.aborted || performance.now() >= deadline,
     );
     const encode = vm.unwrapResult(vm.evalCode("JSON.stringify"));
     const parse = vm.unwrapResult(vm.evalCode("JSON.parse"));
@@ -130,7 +131,8 @@ export class QuickJSExecutor implements CodeExecutor {
         `(function () { "use strict";\n${code}\n})()`,
         "agent-action.js",
       );
-      runtime.removeInterruptHandler();
+      // 提交答案只终止动作代码；错误展开与 state 导出仍须受超时和取消保护。
+      executingAction = false;
       if (result.error) {
         const error: unknown = vm.dump(result.error);
         result.error.dispose();
@@ -140,8 +142,7 @@ export class QuickJSExecutor implements CodeExecutor {
         result.value.dispose();
       }
       control.throwIfAborted();
-      // 答案提交时中断处理器会终止代码；导出 state 前解除它。
-      runtime.removeInterruptHandler();
+      // 序列化可能执行 getter / toJSON，不能在导出 state 前移除中断处理器。
       const stateHandle = vm.getProp(vm.global, "state");
       try {
         // 仅正常结束或主动提交答案时导出 state；返回给 CodeAgent 供下一轮恢复。
@@ -153,15 +154,24 @@ export class QuickJSExecutor implements CodeExecutor {
         stateHandle.dispose();
       }
     } finally {
-      runtime.removeInterruptHandler();
-      // 先断开全局函数引用，避免错误栈保留宿主回调至 Runtime 释放之后。
-      vm.evalCode(
-        "delete globalThis.tools; delete globalThis.console; delete globalThis.final_answer; delete globalThis.state;",
-      ).dispose();
-      encode.dispose();
-      parse.dispose();
-      vm.dispose();
-      runtime.dispose();
+      // 动作可能已经超时；清理另设短期限，避免立即中断清理或无限执行客体代码。
+      const cleanupDeadline = performance.now() + 50;
+      runtime.setInterruptHandler(() => performance.now() >= cleanupDeadline);
+      try {
+        // 顶层 this 指向原始全局对象，绕过客体替换的 globalThis / Proxy / getter。
+        vm.evalCode(
+          "delete this.tools; delete this.console; delete this.final_answer; delete this.state;",
+        ).dispose();
+      } finally {
+        encode.dispose();
+        parse.dispose();
+        try {
+          vm.dispose();
+        } finally {
+          runtime.removeInterruptHandler();
+          runtime.dispose();
+        }
+      }
     }
   }
 }
