@@ -45,6 +45,12 @@ async function main(): Promise<void> {
       ? { planningInterval: options.planningInterval }
       : {}),
     ...(options.contextChars !== undefined ? { context: { maxChars: options.contextChars } } : {}),
+    ...(options.maxModelCalls !== undefined ? { maxModelCalls: options.maxModelCalls } : {}),
+    ...(options.maxToolCalls !== undefined ? { maxToolCalls: options.maxToolCalls } : {}),
+    ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+    ...(options.maxRepeatedErrors !== undefined
+      ? { maxRepeatedErrors: options.maxRepeatedErrors }
+      : {}),
   };
   const agent = options.code ? new CodeAgent(config) : new ToolCallingAgent(config);
   const lifecycle = new AbortController();

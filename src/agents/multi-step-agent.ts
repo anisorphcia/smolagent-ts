@@ -1,5 +1,8 @@
 import type { JsonValue } from "../core/json.ts";
-import { AgentError, abortable, errorMessage } from "../core/errors.ts";
+import { AgentError, BudgetExceededError, abortable, errorMessage } from "../core/errors.ts";
+import type { StopReason } from "../core/errors.ts";
+import { RunControl, validateRunLimits } from "../core/run-control.ts";
+import type { RunLimits, BudgetUsage } from "../core/run-control.ts";
 import { AgentMemory } from "../memory/agent-memory.ts";
 import { validateContextOptions } from "../memory/context-window.ts";
 import type { ContextOptions } from "../memory/context-window.ts";
@@ -12,7 +15,7 @@ import { ToolRegistry } from "../tools/tool.ts";
 import type { Tool, ToolDefinition, ToolCallEvent, ToolEventObserver } from "../tools/tool.ts";
 import { finalAnswerTool } from "../tools/default-tools.ts";
 
-export interface AgentOptions {
+export interface AgentOptions extends RunLimits {
   model: Model;
   tools?: readonly Tool[];
   maxSteps?: number;
@@ -41,11 +44,13 @@ export interface RunOptions {
   onEvent?: (event: AgentEvent) => void | Promise<void>;
 }
 export interface RunResult {
-  status: "success" | "max_steps";
+  status: "success" | "max_steps" | "budget_exceeded" | "stalled";
   output: JsonValue;
   steps: readonly MemoryStep[];
   summary: RunSummary;
   durationMs: number;
+  budget: BudgetUsage;
+  stopReason?: StopReason;
 }
 
 /**
@@ -60,7 +65,7 @@ export abstract class MultiStepAgent {
   private readonly options: AgentOptions;
   private busy = false;
   private observer: RunOptions["onEvent"];
-  private modelCalls = 0;
+  private control: RunControl | undefined;
 
   constructor(options: AgentOptions, systemPrompt: string) {
     for (const [name, value] of [
@@ -70,11 +75,14 @@ export abstract class MultiStepAgent {
       if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} 必须是正整数`);
     }
     this.options = options;
+    validateRunLimits(options);
     if (options.context) validateContextOptions(options.context);
     this.model = options.model;
     // 构造 Agent 时注册一次工具，并自动加入提交答案的工具；不是每轮重新注册。
     // protected 属性由子类继承，所以子类可以直接使用 this.tools / this.model。
-    this.tools = new ToolRegistry([...(options.tools ?? []), finalAnswerTool]);
+    this.tools = new ToolRegistry([...(options.tools ?? []), finalAnswerTool], () =>
+      this.control?.beforeTool(),
+    );
     this.memory = new AgentMemory(`${systemPrompt}\n${options.instructions ?? ""}`.trim());
   }
 
@@ -82,6 +90,9 @@ export abstract class MultiStepAgent {
   protected abstract act(step: ActionStep, signal: AbortSignal): Promise<void>;
   protected resetState(): void {}
   protected async cleanup(): Promise<void> {}
+  protected checkRunBudget(): void {
+    this.control!.check();
+  }
   private emit(event: AgentEvent): void {
     if (!this.observer) return;
     try {
@@ -105,7 +116,7 @@ export abstract class MultiStepAgent {
     options: GenerateOptions,
     phase: "planning" | "action",
   ): Promise<ModelResponse> {
-    const callNumber = ++this.modelCalls;
+    const callNumber = this.control!.beforeModel();
     const started = performance.now();
     let succeeded = false;
     this.emit({ type: "model_start", callNumber, phase });
@@ -114,8 +125,12 @@ export abstract class MultiStepAgent {
         () => this.model.generate(messages, options),
         options.signal,
       );
+      this.control!.recordUsage(response.usage);
       succeeded = true;
       return response;
+    } catch (error) {
+      this.control!.recordModelFailure();
+      throw error;
     } finally {
       this.emit({
         type: "model_end",
@@ -135,10 +150,12 @@ export abstract class MultiStepAgent {
     };
   }
   protected async checkAnswer(answer: JsonValue, signal: AbortSignal): Promise<void> {
+    this.checkRunBudget();
     for (const check of this.options.finalAnswerChecks ?? []) {
       if (!(await abortable(async () => check(answer, this.memory), signal)))
         throw new AgentError("最终答案未通过校验，请修正后重新提交");
     }
+    this.checkRunBudget();
   }
 
   /** run 消费 stream，因此两种入口共享预算、错误恢复和记忆语义。 */
@@ -169,7 +186,7 @@ export abstract class MultiStepAgent {
     const signal = AbortSignal.any(signals);
     try {
       this.observer = options.onEvent;
-      this.modelCalls = 0;
+      this.control = new RunControl(this.options);
       signal.throwIfAborted();
       // 默认开启新任务历史；reset:false 保留会话，CodeAgent 的 JSON state 也会保留。
       if (options.reset !== false) {
@@ -182,6 +199,7 @@ export abstract class MultiStepAgent {
       yield taskStep;
       for (let number = 1; number <= (this.options.maxSteps ?? 6); number++) {
         signal.throwIfAborted();
+        this.control.checkModelBudget();
         // 不配置 planningInterval 就跳过规划；配置 N 时在第 1、1+N、1+2N…轮动作前规划。
         // 规划调用额外请求一次模型，但不单独占用 maxSteps 的动作轮数。
         if (this.options.planningInterval && (number - 1) % this.options.planningInterval === 0) {
@@ -189,6 +207,8 @@ export abstract class MultiStepAgent {
           this.memory.append(plan);
           yield structuredClone(plan);
         }
+        // 规划可能已用完模型或 token 预算，不再创建无法执行的空动作。
+        this.control.checkModelBudget();
         const actionStarted = performance.now();
         const step: ActionStep = {
           kind: "action",
@@ -201,12 +221,17 @@ export abstract class MultiStepAgent {
         // 模型/网络故障直接上抛；工具及代码错误由 act 写成模型可见的反馈。
         try {
           await this.act(step, signal);
+        } catch (error) {
+          signal.throwIfAborted();
+          if (!(error instanceof BudgetExceededError)) throw error;
+          step.messages.push({ role: "user", content: this.feedback(step, error) });
         } finally {
           // act 抛错也记录这次尝试；若异常继续上抛，后面的 yield 和完成判断不会执行。
           step.timing.durationMs = performance.now() - actionStarted;
           this.memory.append(step);
         }
         yield structuredClone(step);
+        this.control.check();
         // act 可能把初始 false 改为 true；输出 action 后，再单独输出 final 并返回汇总。
         if (step.isFinalAnswer) {
           const output = step.output!; // null 同样是合法最终答案，以标志区分是否结束。
@@ -216,9 +241,22 @@ export abstract class MultiStepAgent {
           yield structuredClone(finalStep);
           return this.result("success", output, firstStep, started);
         }
+        this.control.recordAction(step);
       }
       // 与 Python 的兜底模型生成不同：预算耗尽不追加调用，也不把猜测标为成功。
       return this.result("max_steps", null, firstStep, started);
+    } catch (error) {
+      signal.throwIfAborted(); // 即使取消原因恰好也是 BudgetExceededError，也保留取消语义。
+      if (!(error instanceof BudgetExceededError)) throw error;
+      return {
+        ...this.result(
+          error.reason === "repeated_error" ? "stalled" : "budget_exceeded",
+          null,
+          firstStep,
+          started,
+        ),
+        stopReason: error.reason,
+      };
     } finally {
       // 正常完成、异常、取消或消费者提前关闭生成器，都进入同一清理入口。
       lifecycle.abort(new AgentError("运行已结束"));
@@ -227,6 +265,7 @@ export abstract class MultiStepAgent {
       } finally {
         this.busy = false;
         this.observer = undefined;
+        this.control = undefined;
       }
     }
   }
@@ -252,6 +291,7 @@ export abstract class MultiStepAgent {
       steps,
       summary: summarizeSteps(steps),
       durationMs: performance.now() - started,
+      budget: this.control!.snapshot(),
     };
   }
   private async plan(signal: AbortSignal): Promise<PlanningStep> {

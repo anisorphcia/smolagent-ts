@@ -14,6 +14,10 @@ test("CLI 校验数值配置并支持 -- 后的完整任务", () => {
     ["--planning-interval"],
     ["--max-retries", "6"],
     ["--context-chars", "0"],
+    ["--max-model-calls", "0"],
+    ["--max-tool-calls", "-1"],
+    ["--max-tokens", "abc"],
+    ["--max-repeated-errors", "1.5"],
     ["--unknown"],
   ])
     assert.throws(() => parseCliArgs(args));
@@ -48,6 +52,10 @@ test("两种 Agent 的 CLI 流输出模型进度、工具事件、步骤和最�
         "1",
         "--context-chars",
         "5000",
+        "--max-model-calls",
+        "4",
+        "--max-tool-calls",
+        "2",
         ...mode,
       ],
       { cwd, timeout: 10_000 },
@@ -144,4 +152,29 @@ test("CLI 在等待模型时支持 Ctrl+C，取消后退出码为 130", async ()
   assert.equal(result.code, 130);
   assert.equal(result.signal, null);
   assert.match(result.stderr, /用户取消任务/);
+});
+
+test("CLI 运行预算耗尽以非零退出码报告具体原因", async () => {
+  for (const [flag, value, reason] of [
+    ["--max-model-calls", "1", "max_model_calls"],
+    ["--max-tool-calls", "1", "max_tool_calls"],
+    ["--max-tokens", "10", "token_usage_unavailable"],
+  ]) {
+    await assert.rejects(
+      exec(process.execPath, ["src/cli.ts", "--demo", "--stream", flag!, value!], {
+        cwd,
+        timeout: 10_000,
+      }),
+      (error) => {
+        assert.ok(error !== null && typeof error === "object" && "stdout" in error);
+        const events = String(error.stdout)
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+        assert.equal(events.at(-1)?.result.status, "budget_exceeded");
+        assert.equal(events.at(-1)?.result.stopReason, reason);
+        return true;
+      },
+    );
+  }
 });

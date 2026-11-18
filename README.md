@@ -77,6 +77,55 @@ npm run cli -- --demo --code --stream --context-chars 5000
 
 `maxChars` 计量内部统一消息数组序列化后的字符数，不是精确 token 数或供应商转换后的 HTTP 请求大小，也不包含单独提供的工具 schema。内置简要记录不额外调用 LLM，不等同于完整语义摘要。
 
+## 运行预算与停止原因
+
+两种 Agent 都可配置额外预算，默认不启用这些限额：
+
+```ts
+const agent = new ToolCallingAgent({
+  model,
+  tools: [calculatorTool],
+  maxSteps: 8,
+  maxModelCalls: 12,
+  maxToolCalls: 20,
+  maxTokens: 20_000,
+  maxRepeatedErrors: 3,
+});
+const result = await agent.run("执行任务");
+console.log(result.status, result.stopReason, result.budget);
+```
+
+| 配置                | 计数与行为                                                                                                                                                                                      |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxModelCalls`     | 一次运行的逻辑 `Model.generate()` 调用数，包含规划。HTTP 内部重试由独立的 `maxRetries` 控制，不重复计入此计数。                                                                                 |
+| `maxToolCalls`      | 整次运行中获准执行的注册表调用尝试，包含未知工具、失败调用和工具调用 Agent 的 `final_answer`。代码 Agent 的独立 `final_answer()` 不计为普通工具；QuickJS 自身每个动作的工具调用限制仍同时生效。 |
+| `maxTokens`         | 模型已报告的输入与输出 token 总数。响应后检查，最后一次生成可能越过上限；并非服务商硬计费上限。缺少 usage 时明确停止，非法 usage 则抛出模型错误。                                               |
+| `maxRepeatedErrors` | 连续相同失败动作的阈值；根据错误、代码、观察及工具名称/参数/结果识别，忽略调用 ID、耗时和参数对象键顺序。成功动作会重置连续失败计数；不做语义相似度判断。                                       |
+
+预算在每次 `run` / `stream` 开始时重置，`reset:false` 只保留会话历史和代码 state。子 Agent 独立计数，父 Agent 将调用子 Agent 算作一次工具调用，不自动汇总子 Agent 的模型或 token 用量。
+
+模型请求数和工具调用数在执行前检查。工具拒绝由注册表的执行约束处理，观察器异常不会放行调用；自定义执行器只要使用传入的注册表，也受同一限制。被拒绝的工具尝试仍产生错误轨迹，但不增加已获准工具调用数。触发 token 限额的回复与 usage 会保留，代码不再执行，结构化工具调用补齐错误反馈以保持消息配对。
+
+`RunResult.budget` 返回 `{ modelCalls, toolCalls, tokens }`；没有完整 usage 时 `tokens` 为 `null`。预算耗尽返回 `status: "budget_exceeded"`，重复失败返回 `status: "stalled"`，并带以下 `stopReason`：
+
+| stopReason                | 含义                                             |
+| ------------------------- | ------------------------------------------------ |
+| `max_model_calls`         | 下一次模型调用会超过配置次数                     |
+| `max_tool_calls`          | 工具调用被次数上限拒绝                           |
+| `max_tokens`              | 响应后累计用量超限，或已达到上限而不能再请求模型 |
+| `token_usage_unavailable` | 配置了 token 预算，但模型未提供 usage            |
+| `repeated_error`          | 连续相同失败达到阈值                             |
+
+预算停止不追加 final 步骤，输出为 `null`；已发生的动作和轨迹仍保留。模型/网络错误及外部取消仍向调用方抛出，原有动作步数耗尽仍返回 `max_steps`。
+
+CLI 对应选项为 `--max-model-calls`、`--max-tool-calls`、`--max-tokens`、`--max-repeated-errors`，例如：
+
+```bash
+npm run cli -- --demo --code --stream --max-model-calls 4 --max-tool-calls 2
+```
+
+离线 demo 默认不报告 usage，因此配置 `--max-tokens` 时会以 `token_usage_unavailable` 停止。
+
 ## 目录与阅读路线
 
 ```text

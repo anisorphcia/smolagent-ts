@@ -9,6 +9,10 @@ export interface CliOptions {
   maxRetries: number;
   planningInterval?: number;
   contextChars?: number;
+  maxModelCalls?: number;
+  maxToolCalls?: number;
+  maxTokens?: number;
+  maxRepeatedErrors?: number;
 }
 
 const numericFlags = {
@@ -17,6 +21,10 @@ const numericFlags = {
   "--planning-interval": "planningInterval",
   "--max-retries": "maxRetries",
   "--context-chars": "contextChars",
+  "--max-model-calls": "maxModelCalls",
+  "--max-tool-calls": "maxToolCalls",
+  "--max-tokens": "maxTokens",
+  "--max-repeated-errors": "maxRepeatedErrors",
 } as const;
 
 export function parseCliArgs(args: readonly string[]): CliOptions {
@@ -78,4 +86,8 @@ export const cliHelp = `用法：npm run cli -- [选项] "任务"
 --timeout-ms N          总运行超时，默认 120000
 --max-retries N         模型暂时性错误的额外重试次数，0 到 5，默认 0
 --context-chars N       模型消息 JSON 的字符预算，默认不裁剪
+--max-model-calls N     逻辑模型调用上限，包含规划，默认不额外限制
+--max-tool-calls N      整次运行的注册表工具调用上限
+--max-tokens N          累计已报告 token 上限，缺少 usage 时停止
+--max-repeated-errors N 连续相同失败的上限，默认不启用检测
 --                      后续内容全部作为任务`;

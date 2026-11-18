@@ -69,7 +69,9 @@ export function objectInput(input: unknown): Record<string, unknown> {
 /** 按名称保存工具实现：definitions() 提供模型描述，call() 负责宿主侧分发。 */
 export class ToolRegistry {
   private readonly tools = new Map<string, Tool>();
-  constructor(tools: readonly Tool[]) {
+  private readonly beforeCall: (() => void) | undefined;
+  constructor(tools: readonly Tool[], beforeCall?: () => void) {
+    this.beforeCall = beforeCall;
     for (const tool of tools) {
       if (this.tools.has(tool.name)) throw new ToolError(`重复的工具名称：${tool.name}`);
       this.tools.set(tool.name, tool);
@@ -106,6 +108,8 @@ export class ToolRegistry {
     notify("tool_start");
     try {
       context.signal.throwIfAborted();
+      // 执行约束可以拒绝调用，不能放到会吞掉异常的观察器中；必须在副作用前检查。
+      this.beforeCall?.();
       const tool = this.tools.get(name);
       if (!tool) throw new ToolError(`未知工具：${name}`);
       const output = await abortable(() => tool.call(input, context), context.signal);

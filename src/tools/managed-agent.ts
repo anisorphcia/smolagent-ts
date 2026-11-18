@@ -10,7 +10,8 @@ export function managedAgentTool(name: string, description: string, agent: Multi
     parse: (input) => objectInput(input).task as string,
     async execute(task, { signal }) {
       const result = await agent.run(task, { signal });
-      if (result.status !== "success") throw new Error("子 Agent 达到步数上限");
+      if (result.status !== "success")
+        throw new Error(`子 Agent 未完成：${result.stopReason ?? result.status}`);
       return result.output;
     },
   });

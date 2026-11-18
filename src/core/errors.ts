@@ -22,6 +22,20 @@ export class ModelError extends AgentError {
   }
 }
 export class ExecutionError extends AgentError {}
+export type StopReason =
+  | "max_model_calls"
+  | "max_tool_calls"
+  | "max_tokens"
+  | "token_usage_unavailable"
+  | "repeated_error";
+export class BudgetExceededError extends AgentError {
+  readonly reason: StopReason;
+  constructor(reason: StopReason) {
+    super(`运行预算已耗尽：${reason}`);
+    this.name = "BudgetExceededError";
+    this.reason = reason;
+  }
+}
 export const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 

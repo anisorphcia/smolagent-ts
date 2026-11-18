@@ -29,6 +29,7 @@ export class CodeAgent extends MultiStepAgent {
     step.messages.push(response.message);
     if (response.usage) step.usage = response.usage;
     try {
+      this.checkRunBudget(); // 超额回复先保存到步骤，但不执行其中的代码。
       // LLM 返回字符串；matchAll 在本地解析它，展开迭代器得到“所有代码块的匹配数组”。
       // (?:javascript|js) 不捕获；([\s\S]*?) 是第一个捕获组，内容是围栏内的纯代码。
       const blocks = [
@@ -49,6 +50,7 @@ export class CodeAgent extends MultiStepAgent {
       // 成功执行后接回 state；下一轮的新解释器从这里恢复，局部变量不会跨轮保留。
       this.state = result.state;
       step.observations.push(...result.logs);
+      this.checkRunBudget(); // 代码即使 catch 了工具预算错误，也不能把本次运行标记为成功。
       if (result.isFinalAnswer) {
         // 执行器捕获了 final_answer(value)；通过 Agent 的答案校验后才通知外层循环结束。
         await this.checkAnswer(result.output, signal);
