@@ -16,9 +16,16 @@ export interface AgentOptions {
   maxSteps?: number;
   planningInterval?: number;
   instructions?: string;
-  finalAnswerChecks?: readonly ((answer: JsonValue, memory: AgentMemory) => boolean | Promise<boolean>)[];
+  finalAnswerChecks?: readonly ((
+    answer: JsonValue,
+    memory: AgentMemory,
+  ) => boolean | Promise<boolean>)[];
 }
-export interface RunOptions { reset?: boolean; signal?: AbortSignal; timeoutMs?: number }
+export interface RunOptions {
+  reset?: boolean;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
 export interface RunResult {
   status: "success" | "max_steps";
   output: JsonValue;
@@ -40,7 +47,10 @@ export abstract class MultiStepAgent {
   private busy = false;
 
   constructor(options: AgentOptions, systemPrompt: string) {
-    for (const [name, value] of [["maxSteps", options.maxSteps ?? 6], ["planningInterval", options.planningInterval ?? 1]] as const) {
+    for (const [name, value] of [
+      ["maxSteps", options.maxSteps ?? 6],
+      ["planningInterval", options.planningInterval ?? 1],
+    ] as const) {
       if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} 必须是正整数`);
     }
     this.options = options;
@@ -57,7 +67,8 @@ export abstract class MultiStepAgent {
   protected async cleanup(): Promise<void> {}
   protected async checkAnswer(answer: JsonValue, signal: AbortSignal): Promise<void> {
     for (const check of this.options.finalAnswerChecks ?? []) {
-      if (!await abortable(async () => check(answer, this.memory), signal)) throw new AgentError("最终答案未通过校验，请修正后重新提交");
+      if (!(await abortable(async () => check(answer, this.memory), signal)))
+        throw new AgentError("最终答案未通过校验，请修正后重新提交");
     }
   }
 
@@ -74,7 +85,11 @@ export abstract class MultiStepAgent {
   async *stream(task: string, options: RunOptions = {}): AsyncGenerator<MemoryStep, RunResult> {
     if (this.busy) throw new AgentError("同一个 Agent 不能并发运行");
     if (!task.trim()) throw new TypeError("task 不能为空");
-    if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)) throw new RangeError("timeoutMs 必须是正整数");
+    if (
+      options.timeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)
+    )
+      throw new RangeError("timeoutMs 必须是正整数");
     this.busy = true;
     const started = performance.now();
     const firstStep = options.reset === false ? this.memory.steps.length : 0;
@@ -86,7 +101,10 @@ export abstract class MultiStepAgent {
     try {
       signal.throwIfAborted();
       // 默认开启新任务历史；reset:false 保留会话，CodeAgent 的 JSON state 也会保留。
-      if (options.reset !== false) { this.memory.reset(); this.resetState(); }
+      if (options.reset !== false) {
+        this.memory.reset();
+        this.resetState();
+      }
       const taskStep = { kind: "task", task } as const;
       this.memory.append(taskStep);
       // stream 输出完整步骤，不是模型 token 流；yield 后等待调用方请求下一项。
@@ -102,12 +120,17 @@ export abstract class MultiStepAgent {
         }
         const actionStarted = performance.now();
         const step: ActionStep = {
-          kind: "action", stepNumber: number, messages: [], observations: [], isFinalAnswer: false,
+          kind: "action",
+          stepNumber: number,
+          messages: [],
+          observations: [],
+          isFinalAnswer: false,
           timing: { startedAt: Date.now(), durationMs: 0 },
         };
         // 模型/网络故障直接上抛；工具及代码错误由 act 写成模型可见的反馈。
-        try { await this.act(step, signal); }
-        finally {
+        try {
+          await this.act(step, signal);
+        } finally {
           // act 抛错也记录这次尝试；若异常继续上抛，后面的 yield 和完成判断不会执行。
           step.timing.durationMs = performance.now() - actionStarted;
           this.memory.append(step);
@@ -127,8 +150,11 @@ export abstract class MultiStepAgent {
     } finally {
       // 正常完成、异常、取消或消费者提前关闭生成器，都进入同一清理入口。
       lifecycle.abort(new AgentError("运行已结束"));
-      try { await this.cleanup(); }
-      finally { this.busy = false; }
+      try {
+        await this.cleanup();
+      } finally {
+        this.busy = false;
+      }
     }
   }
 
@@ -138,21 +164,41 @@ export abstract class MultiStepAgent {
     step.observations.push(text);
     return text;
   }
-  private result(status: RunResult["status"], output: JsonValue, offset: number, started: number): RunResult {
+  private result(
+    status: RunResult["status"],
+    output: JsonValue,
+    offset: number,
+    started: number,
+  ): RunResult {
     // 续聊时 memory 包含旧步骤，但本次 RunResult 仅汇总本次运行新增的步骤。
     const steps = this.memory.steps.slice(offset);
-    return { status, output, steps, summary: summarizeSteps(steps), durationMs: performance.now() - started };
+    return {
+      status,
+      output,
+      steps,
+      summary: summarizeSteps(steps),
+      durationMs: performance.now() - started,
+    };
   }
   private async plan(signal: AbortSignal): Promise<PlanningStep> {
     const started = performance.now();
     const startedAt = Date.now();
     // 读取现有任务与观察来更新计划；这里只生成文字，不在规划请求中执行工具。
-    const response = await abortable(() => this.model.generate(
-      [...this.memory.toMessages(), { role: "user", content: planningPrompt }], { signal },
-    ), signal);
+    const response = await abortable(
+      () =>
+        this.model.generate(
+          [...this.memory.toMessages(), { role: "user", content: planningPrompt }],
+          { signal },
+        ),
+      signal,
+    );
     return {
-      kind: "planning", plan: response.message.content,
-      messages: [{ role: "assistant", content: response.message.content }, { role: "user", content: "Proceed with the plan." }],
+      kind: "planning",
+      plan: response.message.content,
+      messages: [
+        { role: "assistant", content: response.message.content },
+        { role: "user", content: "Proceed with the plan." },
+      ],
       timing: { startedAt, durationMs: performance.now() - started },
       ...(response.usage ? { usage: response.usage } : {}),
     };

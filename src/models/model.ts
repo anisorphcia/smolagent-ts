@@ -1,8 +1,15 @@
 import type { JsonValue } from "../core/json.ts";
 import type { ToolDefinition } from "../tools/tool.ts";
 
-export interface ToolCall { id: string; name: string; arguments: JsonValue }
-export interface TokenUsage { inputTokens: number; outputTokens: number }
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: JsonValue;
+}
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
 export type ChatMessage =
   | { role: "system" | "user"; content: string }
   | { role: "assistant"; content: string; toolCalls?: ToolCall[] }

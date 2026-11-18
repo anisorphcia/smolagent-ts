@@ -4,9 +4,18 @@
   "private": true,
   "type": "module",
   "description": "Readable TypeScript reconstruction of the smolagents core",
-  "engines": { "node": ">=22.18.0" },
-  "exports": { ".": { "types": "./dist/src/index.d.ts", "import": "./dist/src/index.js" } },
-  "bin": { "smolagent-ts": "./dist/src/cli.js" },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "bin": {
+    "smolagent-ts": "./dist/src/cli.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -17,8 +26,24 @@
     "demo:managed": "node examples/03-managed-agent.ts",
     "demo:live": "node --env-file-if-exists=.env examples/04-live-model.ts",
     "demo:code:live": "node --env-file-if-exists=.env examples/05-code-agent-live.ts",
-    "cli": "node --env-file-if-exists=.env src/cli.ts"
+    "cli": "node --env-file-if-exists=.env src/cli.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
   },
-  "dependencies": { "quickjs-emscripten": "0.32.0" },
-  "devDependencies": { "@types/node": "24.13.3", "typescript": "7.0.2" }
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "dependencies": {
+    "quickjs-emscripten": "0.32.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.1",
+    "prettier": "^3.10.1",
+    "typescript": "7.0.2"
+  }
 }

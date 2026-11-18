@@ -4,20 +4,31 @@ import { ToolError, errorMessage } from "../core/errors.ts";
 import { validate } from "./schema.ts";
 import type { Schema } from "./schema.ts";
 
-export interface ToolContext { signal: AbortSignal }
-export interface ToolDefinition { name: string; description: string; parameters: Schema }
+export interface ToolContext {
+  signal: AbortSignal;
+}
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Schema;
+}
 export interface Tool extends ToolDefinition {
   call(input: unknown, context: ToolContext): Promise<JsonValue>;
 }
 
 /** 对应 Python Tool + @tool；泛型保留工具内部的参数类型，运行时解析负责外部输入。 */
-export function defineTool<Input>(options: ToolDefinition & {
-  parse: (input: unknown) => Input;
-  execute: (input: Input, context: ToolContext) => JsonValue | Promise<JsonValue>;
-}): Tool {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(options.name)) throw new TypeError("工具名称必须是合法标识符");
+export function defineTool<Input>(
+  options: ToolDefinition & {
+    parse: (input: unknown) => Input;
+    execute: (input: Input, context: ToolContext) => JsonValue | Promise<JsonValue>;
+  },
+): Tool {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(options.name))
+    throw new TypeError("工具名称必须是合法标识符");
   return {
-    name: options.name, description: options.description, parameters: options.parameters,
+    name: options.name,
+    description: options.description,
+    parameters: options.parameters,
     // ToolRegistry.call() 最终调用此方法，再进入创建工具时传入的 options.execute。
     async call(input, context) {
       context.signal.throwIfAborted();
@@ -53,7 +64,11 @@ export class ToolRegistry {
   }
   definitions(): ToolDefinition[] {
     // 去掉 call 方法，只把模型可理解的名称、说明和参数结构提供给模型。
-    return [...this.tools.values()].map(({ name, description, parameters }) => ({ name, description, parameters }));
+    return [...this.tools.values()].map(({ name, description, parameters }) => ({
+      name,
+      description,
+      parameters,
+    }));
   }
   async call(name: string, input: unknown, context: ToolContext): Promise<JsonValue> {
     const tool = this.tools.get(name);

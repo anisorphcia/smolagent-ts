@@ -4,7 +4,13 @@ export { ToolCallingAgent } from "./agents/tool-calling-agent.ts";
 export { CodeAgent } from "./agents/code-agent.ts";
 export type { CodeAgentOptions } from "./agents/code-agent.ts";
 export { AgentMemory } from "./memory/agent-memory.ts";
-export type { MemoryStep, ActionStep, PlanningStep, TaskStep, FinalAnswerStep } from "./memory/steps.ts";
+export type {
+  MemoryStep,
+  ActionStep,
+  PlanningStep,
+  TaskStep,
+  FinalAnswerStep,
+} from "./memory/steps.ts";
 export type { Model, ModelResponse, ChatMessage, ToolCall, TokenUsage } from "./models/model.ts";
 export { ScriptedModel, toolReply, textReply } from "./models/scripted-model.ts";
 export { OpenAIModel } from "./models/openai-model.ts";

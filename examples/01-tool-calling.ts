@@ -12,6 +12,9 @@ const agent = new ToolCallingAgent({ model, tools: [calculatorTool] });
 const run = agent.stream("计算 6 × 7");
 for (;;) {
   const next = await run.next();
-  if (next.done) { console.log("运行结果：", next.value); break; }
+  if (next.done) {
+    console.log("运行结果：", next.value);
+    break;
+  }
   console.log("步骤：", next.value);
 }

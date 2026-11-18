@@ -62,9 +62,7 @@ docs/            架构、逐步阅读、Python 对照和扩展规划
 ## 最小用法
 
 ```ts
-import {
-  ToolCallingAgent, ScriptedModel, calculatorTool, toolReply,
-} from "./src/index.ts";
+import { ToolCallingAgent, ScriptedModel, calculatorTool, toolReply } from "./src/index.ts";
 
 const agent = new ToolCallingAgent({
   tools: [calculatorTool],
@@ -77,7 +75,7 @@ const agent = new ToolCallingAgent({
 
 const result = await agent.run("计算 6 × 7");
 console.log(result.status, result.output); // success 42
-console.log(result.summary);              // 步数、错误数、usage
+console.log(result.summary); // 步数、错误数、usage
 ```
 
 这里的 `ScriptedModel` 用预设回复替代真实 LLM，让你不用网络也能观察 Agent。示例 01 还展示了读取实际工具观察生成下一条回复的写法。

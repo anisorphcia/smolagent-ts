@@ -27,10 +27,7 @@ export class ToolCallingAgent extends MultiStepAgent {
       // 普通文字不代表任务完成；反馈给模型，要求通过 final_answer 显式提交。
       step.messages.push({
         role: "user",
-        content: this.feedback(
-          step,
-          new Error("必须调用工具，最终答案请使用 final_answer"),
-        ),
+        content: this.feedback(step, new Error("必须调用工具，最终答案请使用 final_answer")),
       });
       return;
     }
@@ -40,8 +37,7 @@ export class ToolCallingAgent extends MultiStepAgent {
     for (const call of calls) {
       let content: string;
       try {
-        if (invalidFinalBatch)
-          throw new Error("final_answer 必须单独调用，请先完成其他工具调用");
+        if (invalidFinalBatch) throw new Error("final_answer 必须单独调用，请先完成其他工具调用");
         const output = await abortable(
           () => this.tools.call(call.name, call.arguments, { signal }),
           signal,

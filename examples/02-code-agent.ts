@@ -3,7 +3,9 @@ import { CodeAgent, ScriptedModel, calculatorTool, textReply } from "../src/inde
 const agent = new CodeAgent({
   tools: [calculatorTool],
   model: new ScriptedModel([
-    textReply('```javascript\nstate.result = tools.calculate({operation: "multiply", a: 6, b: 7});\nconsole.log(state.result);\n```'),
+    textReply(
+      '```javascript\nstate.result = tools.calculate({operation: "multiply", a: 6, b: 7});\nconsole.log(state.result);\n```',
+    ),
     textReply("```javascript\nfinal_answer(state.result);\n```"),
   ]),
 });

@@ -6,7 +6,13 @@ export type Schema =
   | { type: "string"; description?: string; enum?: readonly string[] }
   | { type: "number" | "integer" | "boolean" | "null"; description?: string }
   | { type: "array"; items: Schema; description?: string }
-  | { type: "object"; properties: Record<string, Schema>; required?: readonly string[]; additionalProperties?: boolean; description?: string };
+  | {
+      type: "object";
+      properties: Record<string, Schema>;
+      required?: readonly string[];
+      additionalProperties?: boolean;
+      description?: string;
+    };
 
 export function validate(schema: Schema, value: unknown, path = "input"): void {
   if (schema.type === undefined) {
@@ -17,8 +23,10 @@ export function validate(schema: Schema, value: unknown, path = "input"): void {
       if (!Object.hasOwn(value, key)) throw new TypeError(`${path}.${key} 是必填参数`);
     }
     for (const [key, entry] of Object.entries(value)) {
-      if (Object.hasOwn(schema.properties, key)) validate(schema.properties[key]!, entry, `${path}.${key}`);
-      else if (schema.additionalProperties !== true) throw new TypeError(`${path}.${key} 是未知参数`);
+      if (Object.hasOwn(schema.properties, key))
+        validate(schema.properties[key]!, entry, `${path}.${key}`);
+      else if (schema.additionalProperties !== true)
+        throw new TypeError(`${path}.${key} 是未知参数`);
     }
   } else if (schema.type === "array") {
     if (!Array.isArray(value)) throw new TypeError(`${path} 必须是数组`);
@@ -26,7 +34,11 @@ export function validate(schema: Schema, value: unknown, path = "input"): void {
   } else if (schema.type === "null") {
     if (value !== null) throw new TypeError(`${path} 必须是 null`);
   } else if (schema.type === "number" || schema.type === "integer") {
-    if (typeof value !== "number" || !Number.isFinite(value) || (schema.type === "integer" && !Number.isInteger(value))) {
+    if (
+      typeof value !== "number" ||
+      !Number.isFinite(value) ||
+      (schema.type === "integer" && !Number.isInteger(value))
+    ) {
       throw new TypeError(`${path} 必须是有限的 ${schema.type}`);
     }
   } else {

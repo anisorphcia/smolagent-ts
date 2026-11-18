@@ -1,7 +1,9 @@
 import { ToolCallingAgent, ScriptedModel, toolReply, managedAgentTool } from "../src/index.ts";
 
 const researcher = new ToolCallingAgent({
-  model: new ScriptedModel([toolReply("final_answer", { answer: "工具、模型、记忆、执行循环是四个核心模块。" })]),
+  model: new ScriptedModel([
+    toolReply("final_answer", { answer: "工具、模型、记忆、执行循环是四个核心模块。" }),
+  ]),
 });
 const manager = new ToolCallingAgent({
   tools: [managedAgentTool("researcher", "分析 Agent 架构", researcher)],
