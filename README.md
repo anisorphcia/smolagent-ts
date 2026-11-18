@@ -80,6 +80,17 @@ console.log(result.summary); // 步数、错误数、usage
 
 这里的 `ScriptedModel` 用预设回复替代真实 LLM，让你不用网络也能观察 Agent。示例 01 还展示了读取实际工具观察生成下一条回复的写法。
 
+## 团队协作与代码格式
+
+项目使用 [husky](https://typicode.github.io/husky/) + [lint-staged](https://github.com/lint-staged/lint-staged) + [Prettier](https://prettier.io/) 统一代码风格：
+
+- `git commit` 时自动触发 `pre-commit` 钩子，对暂存文件执行 `prettier --write`，格式不合规的代码会被自动修正后重新暂存。
+- 格式规则见 [.prettierrc](.prettierrc)（行宽 100、双引号、分号、末尾逗号），`dist`、`package-lock.json`、`docs` 已在 [.prettierignore](.prettierignore) 中排除。
+- 提交前建议先运行 `npm run check`（严格类型检查 + 行为测试）。
+- 手动格式化：`npm run format`；仅检查不改：`npm run format:check`。
+
+克隆后执行 `npm ci` 会通过 `prepare` 脚本自动安装 git 钩子，无需手动配置。
+
 ## 已实现的行为
 
 - `ToolCallingAgent`、`CodeAgent` 共用多步循环、步数预算和最终答案校验。
