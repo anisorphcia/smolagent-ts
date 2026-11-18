@@ -3,7 +3,7 @@ import type { QuickJSHandle } from "quickjs-emscripten";
 import { abortable, ExecutionError, errorMessage } from "../core/errors.ts";
 import { assertJson, isRecord, jsonText } from "../core/json.ts";
 import type { JsonObject, JsonValue } from "../core/json.ts";
-import type { ToolRegistry } from "../tools/tool.ts";
+import type { ToolRegistry, ToolEventObserver } from "../tools/tool.ts";
 import type { CodeExecutor, ExecutionResult } from "./code-executor.ts";
 
 export interface QuickJSOptions {
@@ -35,6 +35,7 @@ export class QuickJSExecutor implements CodeExecutor {
     tools: ToolRegistry,
     state: JsonObject,
     signal: AbortSignal,
+    onToolEvent?: ToolEventObserver,
   ): Promise<ExecutionResult> {
     signal.throwIfAborted();
     if (code.length > 65_536) throw new ExecutionError("代码长度超过限制");
@@ -96,7 +97,11 @@ export class QuickJSExecutor implements CodeExecutor {
             if (++calls > this.options.maxToolCalls) throw new Error("工具调用次数超过限制");
             const args: unknown = JSON.parse(encodeValue(input));
             const value = await abortable(
-              () => tools.call(tool.name, args, { signal: control }),
+              () =>
+                tools.call(tool.name, args, {
+                  signal: control,
+                  ...(onToolEvent ? { onToolEvent } : {}),
+                }),
               control,
             );
             return decode(jsonText(value));

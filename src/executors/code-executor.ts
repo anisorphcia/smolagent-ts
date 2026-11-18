@@ -1,5 +1,5 @@
 import type { JsonObject, JsonValue } from "../core/json.ts";
-import type { ToolRegistry } from "../tools/tool.ts";
+import type { ToolRegistry, ToolEventObserver } from "../tools/tool.ts";
 
 export interface ExecutionResult {
   logs: string[];
@@ -13,5 +13,6 @@ export interface CodeExecutor {
     tools: ToolRegistry,
     state: JsonObject,
     signal: AbortSignal,
+    onToolEvent?: ToolEventObserver,
   ): Promise<ExecutionResult>;
 }

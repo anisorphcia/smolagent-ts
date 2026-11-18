@@ -2,12 +2,12 @@ import type { JsonValue } from "../core/json.ts";
 import { AgentError, abortable, errorMessage } from "../core/errors.ts";
 import { AgentMemory } from "../memory/agent-memory.ts";
 import type { ActionStep, MemoryStep, PlanningStep } from "../memory/steps.ts";
-import type { Model } from "../models/model.ts";
+import type { GenerateOptions, Model, ModelResponse, ChatMessage } from "../models/model.ts";
 import { summarizeSteps } from "../monitoring/run-summary.ts";
 import type { RunSummary } from "../monitoring/run-summary.ts";
 import { planningPrompt } from "../prompts/templates.ts";
 import { ToolRegistry } from "../tools/tool.ts";
-import type { Tool } from "../tools/tool.ts";
+import type { Tool, ToolDefinition, ToolCallEvent, ToolEventObserver } from "../tools/tool.ts";
 import { finalAnswerTool } from "../tools/default-tools.ts";
 
 export interface AgentOptions {
@@ -21,10 +21,21 @@ export interface AgentOptions {
     memory: AgentMemory,
   ) => boolean | Promise<boolean>)[];
 }
+export type AgentEvent =
+  | { type: "model_start"; callNumber: number; phase: "planning" | "action" }
+  | {
+      type: "model_end";
+      callNumber: number;
+      phase: "planning" | "action";
+      succeeded: boolean;
+      durationMs: number;
+    }
+  | (ToolCallEvent & { stepNumber: number });
 export interface RunOptions {
   reset?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
+  onEvent?: (event: AgentEvent) => void | Promise<void>;
 }
 export interface RunResult {
   status: "success" | "max_steps";
@@ -45,6 +56,8 @@ export abstract class MultiStepAgent {
   protected readonly tools: ToolRegistry;
   private readonly options: AgentOptions;
   private busy = false;
+  private observer: RunOptions["onEvent"];
+  private modelCalls = 0;
 
   constructor(options: AgentOptions, systemPrompt: string) {
     for (const [name, value] of [
@@ -65,6 +78,58 @@ export abstract class MultiStepAgent {
   protected abstract act(step: ActionStep, signal: AbortSignal): Promise<void>;
   protected resetState(): void {}
   protected async cleanup(): Promise<void> {}
+  private emit(event: AgentEvent): void {
+    if (!this.observer) return;
+    try {
+      void Promise.resolve(this.observer(structuredClone(event))).catch(() => {});
+    } catch {
+      /* 观察器失败不能导致已执行的动作被再次执行。 */
+    }
+  }
+  protected generate(
+    signal: AbortSignal,
+    tools?: readonly ToolDefinition[],
+  ): Promise<ModelResponse> {
+    return this.requestModel(
+      this.memory.toMessages(),
+      { signal, ...(tools ? { tools } : {}) },
+      "action",
+    );
+  }
+  private async requestModel(
+    messages: readonly ChatMessage[],
+    options: GenerateOptions,
+    phase: "planning" | "action",
+  ): Promise<ModelResponse> {
+    const callNumber = ++this.modelCalls;
+    const started = performance.now();
+    let succeeded = false;
+    this.emit({ type: "model_start", callNumber, phase });
+    try {
+      const response = await abortable(
+        () => this.model.generate(messages, options),
+        options.signal,
+      );
+      succeeded = true;
+      return response;
+    } finally {
+      this.emit({
+        type: "model_end",
+        callNumber,
+        phase,
+        succeeded,
+        durationMs: performance.now() - started,
+      });
+    }
+  }
+  protected toolObserver(step: ActionStep, callId?: string): ToolEventObserver {
+    return (event) => {
+      if (callId !== undefined) event.execution.callId = callId;
+      // 每次完成就写入当前动作，后续代码抛错也不会丢失已经发生的调用。
+      if (event.type === "tool_end") (step.toolExecutions ??= []).push(event.execution);
+      this.emit({ ...event, stepNumber: step.stepNumber });
+    };
+  }
   protected async checkAnswer(answer: JsonValue, signal: AbortSignal): Promise<void> {
     for (const check of this.options.finalAnswerChecks ?? []) {
       if (!(await abortable(async () => check(answer, this.memory), signal)))
@@ -99,6 +164,8 @@ export abstract class MultiStepAgent {
     if (options.timeoutMs) signals.push(AbortSignal.timeout(options.timeoutMs));
     const signal = AbortSignal.any(signals);
     try {
+      this.observer = options.onEvent;
+      this.modelCalls = 0;
       signal.throwIfAborted();
       // 默认开启新任务历史；reset:false 保留会话，CodeAgent 的 JSON state 也会保留。
       if (options.reset !== false) {
@@ -155,6 +222,7 @@ export abstract class MultiStepAgent {
         await this.cleanup();
       } finally {
         this.busy = false;
+        this.observer = undefined;
       }
     }
   }
@@ -186,13 +254,10 @@ export abstract class MultiStepAgent {
     const started = performance.now();
     const startedAt = Date.now();
     // 读取现有任务与观察来更新计划；这里只生成文字，不在规划请求中执行工具。
-    const response = await abortable(
-      () =>
-        this.model.generate(
-          [...this.memory.toMessages(), { role: "user", content: planningPrompt }],
-          { signal },
-        ),
-      signal,
+    const response = await this.requestModel(
+      [...this.memory.toMessages(), { role: "user", content: planningPrompt }],
+      { signal },
+      "planning",
     );
     return {
       kind: "planning",

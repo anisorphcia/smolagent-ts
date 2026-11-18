@@ -1,5 +1,5 @@
 export { MultiStepAgent } from "./agents/multi-step-agent.ts";
-export type { AgentOptions, RunOptions, RunResult } from "./agents/multi-step-agent.ts";
+export type { AgentOptions, RunOptions, RunResult, AgentEvent } from "./agents/multi-step-agent.ts";
 export { ToolCallingAgent } from "./agents/tool-calling-agent.ts";
 export { CodeAgent } from "./agents/code-agent.ts";
 export type { CodeAgentOptions } from "./agents/code-agent.ts";
@@ -16,7 +16,14 @@ export { ScriptedModel, toolReply, textReply } from "./models/scripted-model.ts"
 export { OpenAIModel } from "./models/openai-model.ts";
 export type { OpenAIModelOptions } from "./models/openai-model.ts";
 export { defineTool, ToolRegistry, objectInput } from "./tools/tool.ts";
-export type { Tool, ToolContext, ToolDefinition } from "./tools/tool.ts";
+export type {
+  Tool,
+  ToolContext,
+  ToolDefinition,
+  ToolExecution,
+  ToolCallEvent,
+  ToolEventObserver,
+} from "./tools/tool.ts";
 export { calculatorTool, finalAnswerTool } from "./tools/default-tools.ts";
 export { managedAgentTool } from "./tools/managed-agent.ts";
 export type { Schema } from "./tools/schema.ts";

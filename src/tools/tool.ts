@@ -1,11 +1,24 @@
 import { assertJson, isRecord } from "../core/json.ts";
 import type { JsonValue } from "../core/json.ts";
-import { ToolError, errorMessage } from "../core/errors.ts";
+import { abortable, ToolError, errorMessage } from "../core/errors.ts";
 import { validate } from "./schema.ts";
 import type { Schema } from "./schema.ts";
 
+export interface ToolExecution {
+  id: string;
+  name: string;
+  input: JsonValue;
+  output?: JsonValue;
+  error?: string;
+  callId?: string;
+  timing: { startedAt: number; durationMs: number };
+}
+export type ToolCallEvent =
+  { type: "tool_start"; execution: ToolExecution } | { type: "tool_end"; execution: ToolExecution };
+export type ToolEventObserver = (event: ToolCallEvent) => void | Promise<void>;
 export interface ToolContext {
   signal: AbortSignal;
+  onToolEvent?: ToolEventObserver;
 }
 export interface ToolDefinition {
   name: string;
@@ -71,9 +84,49 @@ export class ToolRegistry {
     }));
   }
   async call(name: string, input: unknown, context: ToolContext): Promise<JsonValue> {
-    const tool = this.tools.get(name);
-    if (!tool) throw new ToolError(`未知工具：${name}`);
-    // 这是具体工具对象的 call 方法，不是再次递归调用 ToolRegistry.call。
-    return tool.call(input, context);
+    context.signal.throwIfAborted();
+    const started = performance.now();
+    const execution: ToolExecution = {
+      id: crypto.randomUUID(),
+      name,
+      input: traceValue(input),
+      timing: { startedAt: Date.now(), durationMs: 0 },
+    };
+    const notify = (type: ToolCallEvent["type"]): void => {
+      if (!context.onToolEvent) return;
+      // 同步和异步观察器都只接收快照，报错不能改变已发生的业务执行结果。
+      try {
+        void Promise.resolve(
+          context.onToolEvent({ type, execution: structuredClone(execution) }),
+        ).catch(() => {});
+      } catch {
+        /* 观察器错误不进入模型的工具错误反馈。 */
+      }
+    };
+    notify("tool_start");
+    try {
+      context.signal.throwIfAborted();
+      const tool = this.tools.get(name);
+      if (!tool) throw new ToolError(`未知工具：${name}`);
+      const output = await abortable(() => tool.call(input, context), context.signal);
+      context.signal.throwIfAborted();
+      execution.output = traceValue(output);
+      return output;
+    } catch (error) {
+      execution.error = errorMessage(error);
+      throw error;
+    } finally {
+      execution.timing.durationMs = performance.now() - started;
+      notify("tool_end");
+    }
   }
+}
+
+function traceValue(value: unknown): JsonValue {
+  try {
+    assertJson(value);
+    return structuredClone(value);
+  } catch {
+    return "[non-JSON value]";
+  } // 轨迹采集失败不改变工具本身的输入/输出行为。
 }

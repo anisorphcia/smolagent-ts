@@ -1,5 +1,6 @@
 import type { JsonValue } from "../core/json.ts";
 import type { ChatMessage, TokenUsage } from "../models/model.ts";
+import type { ToolExecution } from "../tools/tool.ts";
 
 export interface Timing {
   startedAt: number;
@@ -27,6 +28,7 @@ export interface ActionStep {
   output?: JsonValue;
   error?: string;
   usage?: TokenUsage;
+  toolExecutions?: ToolExecution[];
 }
 export interface FinalAnswerStep {
   kind: "final";

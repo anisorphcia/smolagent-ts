@@ -27,6 +27,40 @@ npm run cli -- --demo --code
 npm run cli -- "用工具计算 (6 + 7) × 8"
 ```
 
+查看实时进度与工具轨迹：
+
+```bash
+npm run cli -- --demo --code --stream
+npm run cli -- --code --stream --max-steps 8 --planning-interval 3 --timeout-ms 120000 "用工具计算 (6 + 7) × 8"
+npm run cli -- --help
+```
+
+默认 CLI 仍在结束后打印完整 JSON；`--stream` 改为每行一个 JSON 事件（NDJSON），依次输出模型调用、工具调用、步骤和最终结果。`--max-retries` 可显式开启模型请求重试，默认 0。`--` 后面的所有内容都作为任务。
+
+## 进度与工具轨迹
+
+`agent.run(task, { onEvent })` 和 `agent.stream(task, { onEvent })` 都支持可选观察器：
+
+```ts
+const result = await agent.run("执行任务", {
+  onEvent(event) {
+    if (event.type === "tool_start") console.log("开始工具：", event.execution.name);
+    if (event.type === "tool_end")
+      console.log("工具结果：", event.execution.output, event.execution.error);
+  },
+});
+```
+
+| 事件                        | 含义                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `model_start` / `model_end` | 一次逻辑模型调用开始/结束，含规划或动作阶段、调用序号，结束时含耗时及成功标志。HTTP 内部重试仍属于同一次逻辑调用。 |
+| `tool_start` / `tool_end`   | 一次工具调用开始/结束，含动作编号及独立调用 ID，可配对追踪。结束事件含结果或错误及耗时。                           |
+| `step` / `result`           | CLI 流输出中的完整步骤与最终 RunResult；`agent.stream()` 本身仍只 yield MemoryStep。                               |
+
+每个动作的 `toolExecutions` 保存已完成工具调用的名称、输入、输出或错误、耗时和调用 ID。工具调用 Agent 额外保存模型的 `callId`；代码 Agent 即使在调用工具后抛错，也会保存已经发生的轨迹。独立的 `final_answer()` 是代码执行器的控制函数，不作为普通工具桥接调用记录。
+
+观察器接收独立快照；同步异常和异步拒绝会被隔离，异步观察器不会阻塞任务，应用需要自行等待日志写入完成。轨迹中的业务参数和结果不会自动使用 HTTP 错误的脱敏规则。自定义 `CodeExecutor` 可转发可选的第五个参数 `onToolEvent` 到工具注册表，以接入相同轨迹。
+
 ## 目录与阅读路线
 
 ```text
@@ -79,17 +113,6 @@ console.log(result.summary); // 步数、错误数、usage
 ```
 
 这里的 `ScriptedModel` 用预设回复替代真实 LLM，让你不用网络也能观察 Agent。示例 01 还展示了读取实际工具观察生成下一条回复的写法。
-
-## 团队协作与代码格式
-
-项目使用 [husky](https://typicode.github.io/husky/) + [lint-staged](https://github.com/lint-staged/lint-staged) + [Prettier](https://prettier.io/) 统一代码风格：
-
-- `git commit` 时自动触发 `pre-commit` 钩子，对暂存文件执行 `prettier --write`，格式不合规的代码会被自动修正后重新暂存。
-- 格式规则见 [.prettierrc](.prettierrc)（行宽 100、双引号、分号、末尾逗号），`dist`、`package-lock.json`、`docs` 已在 [.prettierignore](.prettierignore) 中排除。
-- 提交前建议先运行 `npm run check`（严格类型检查 + 行为测试）。
-- 手动格式化：`npm run format`；仅检查不改：`npm run format:check`。
-
-克隆后执行 `npm ci` 会通过 `prepare` 脚本自动安装 git 钩子，无需手动配置。
 
 ## 已实现的行为
 

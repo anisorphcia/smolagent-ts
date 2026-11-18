@@ -1,4 +1,3 @@
-import { abortable } from "../core/errors.ts";
 import { jsonText } from "../core/json.ts";
 import type { JsonObject } from "../core/json.ts";
 import type { CodeExecutor } from "../executors/code-executor.ts";
@@ -26,10 +25,7 @@ export class CodeAgent extends MultiStepAgent {
   }
   protected async act(step: ActionStep, signal: AbortSignal): Promise<void> {
     // 每轮都重新请求模型；模型/网络错误放在 try 外，让调用方直接收到错误。
-    const response = await abortable(
-      () => this.model.generate(this.memory.toMessages(), { signal }),
-      signal,
-    );
+    const response = await this.generate(signal);
     step.messages.push(response.message);
     if (response.usage) step.usage = response.usage;
     try {
@@ -43,7 +39,13 @@ export class CodeAgent extends MultiStepAgent {
       // ! 只对 TypeScript 做非空断言，不提供运行时校验；上面已经检查了匹配数量。
       const code = blocks[0]![1]!;
       step.code = code;
-      const result = await this.executor.execute(code, this.tools, this.state, signal);
+      const result = await this.executor.execute(
+        code,
+        this.tools,
+        this.state,
+        signal,
+        this.toolObserver(step),
+      );
       // 成功执行后接回 state；下一轮的新解释器从这里恢复，局部变量不会跨轮保留。
       this.state = result.state;
       step.observations.push(...result.logs);

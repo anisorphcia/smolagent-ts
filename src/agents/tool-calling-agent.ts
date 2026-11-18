@@ -12,14 +12,7 @@ export class ToolCallingAgent extends MultiStepAgent {
   }
   protected async act(step: ActionStep, signal: AbortSignal): Promise<void> {
     // 模型只接收工具描述和参数 schema，不会直接访问工具实现或执行工具。
-    const response = await abortable(
-      () =>
-        this.model.generate(this.memory.toMessages(), {
-          signal,
-          tools: this.tools.definitions(),
-        }),
-      signal,
-    );
+    const response = await this.generate(signal, this.tools.definitions());
     step.messages.push(response.message);
     if (response.usage) step.usage = response.usage;
     const calls = response.message.toolCalls ?? [];
@@ -39,7 +32,11 @@ export class ToolCallingAgent extends MultiStepAgent {
       try {
         if (invalidFinalBatch) throw new Error("final_answer 必须单独调用，请先完成其他工具调用");
         const output = await abortable(
-          () => this.tools.call(call.name, call.arguments, { signal }),
+          () =>
+            this.tools.call(call.name, call.arguments, {
+              signal,
+              onToolEvent: this.toolObserver(step, call.id),
+            }),
           signal,
         );
         if (call.name === "final_answer") {
