@@ -28,3 +28,4 @@ export { summarizeSteps } from "./monitoring/run-summary.ts";
 export type { RunSummary } from "./monitoring/run-summary.ts";
 export type { JsonValue, JsonObject } from "./core/json.ts";
 export { AgentError, ToolError, ModelError, ExecutionError } from "./core/errors.ts";
+export type { ModelErrorOptions } from "./core/errors.ts";

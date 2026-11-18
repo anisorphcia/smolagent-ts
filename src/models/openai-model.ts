@@ -1,5 +1,7 @@
 import { assertJson, isRecord } from "../core/json.ts";
-import { ModelError } from "../core/errors.ts";
+import { abortable, ModelError } from "../core/errors.ts";
+import { setTimeout as delay } from "node:timers/promises";
+import { httpError, networkError, requestRedactor } from "./request-errors.ts";
 import type { ChatMessage, GenerateOptions, Model, ModelResponse, ToolCall } from "./model.ts";
 
 export interface OpenAIModelOptions {
@@ -8,6 +10,10 @@ export interface OpenAIModelOptions {
   baseUrl?: string;
   timeoutMs?: number;
   fetch?: typeof globalThis.fetch;
+  /** 额外重试次数，0–5，默认 0；不重试工具执行或成功响应的解析。 */
+  maxRetries?: number;
+  retryBaseMs?: number;
+  maxRetryDelayMs?: number;
 }
 
 /** 对应 Python OpenAIModel：只做协议转换，不决定 Agent 何时结束。 */
@@ -17,6 +23,14 @@ export class OpenAIModel implements Model {
     if (!options.apiKey || !options.modelId) throw new TypeError("需要配置 modelId 和 apiKey");
     if (!Number.isSafeInteger(options.timeoutMs ?? 60_000) || (options.timeoutMs ?? 60_000) <= 0) {
       throw new RangeError("timeoutMs 必须是正整数");
+    }
+    for (const [name, value] of Object.entries({
+      maxRetries: options.maxRetries ?? 0,
+      retryBaseMs: options.retryBaseMs ?? 250,
+      maxRetryDelayMs: options.maxRetryDelayMs ?? 5_000,
+    })) {
+      if (!Number.isSafeInteger(value) || value < 0 || (name === "maxRetries" && value > 5))
+        throw new RangeError(`${name} 超出允许范围`);
     }
     this.options = options;
   }
@@ -53,22 +67,80 @@ export class OpenAIModel implements Model {
       body.tool_choice = "required";
     }
     // baseUrl 只含公共前缀（如 /api/v3），这里追加具体接口路径；密钥走 Bearer 请求头。
-    const response = await (this.options.fetch ?? globalThis.fetch)(
-      `${(this.options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "")}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.options.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-        signal,
-      },
+    const url = `${(this.options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "")}/chat/completions`;
+    const serialized = JSON.stringify(body);
+    const redact = requestRedactor(this.options.apiKey, messages);
+    for (let attempt = 0; ; attempt++) {
+      signal.throwIfAborted();
+      let response: Response;
+      try {
+        response = await abortable(async () => {
+          const fetched = await (this.options.fetch ?? globalThis.fetch)(url, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${this.options.apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: serialized,
+            signal,
+          });
+          // 注入的 fetch 即使忽略 signal，迟到的响应也不继续解析或执行。
+          if (signal.aborted) {
+            void fetched.body?.cancel().catch(() => {});
+            signal.throwIfAborted();
+          }
+          return fetched;
+        }, signal);
+      } catch (cause) {
+        signal.throwIfAborted();
+        const error = networkError(cause, redact);
+        if (!error.retryable || attempt >= (this.options.maxRetries ?? 0)) throw error;
+        await this.waitBeforeRetry(attempt, signal);
+        continue;
+      }
+      if (!response.ok) {
+        const error = await httpError(response, signal, redact);
+        if (!error.retryable || attempt >= (this.options.maxRetries ?? 0)) throw error;
+        await this.waitBeforeRetry(attempt, signal, response.headers.get("retry-after"));
+        continue;
+      }
+      // 已成功返回的生成不再重试，防止解析错误触发额外生成与用量。
+      let data: unknown;
+      try {
+        data = await abortable(() => response.json(), signal);
+      } catch {
+        signal.throwIfAborted();
+        throw new ModelError("模型返回了无效 JSON"); // 不传播可能带原始正文的 JSON 解析错误。
+      }
+      signal.throwIfAborted();
+      return parseResponse(data);
+    }
+  }
+
+  private async waitBeforeRetry(
+    attempt: number,
+    signal: AbortSignal,
+    retryAfter: string | null = null,
+  ): Promise<void> {
+    const seconds = retryAfter?.trim() ? Number(retryAfter) : NaN;
+    const requested =
+      Number.isFinite(seconds) && seconds >= 0
+        ? seconds * 1_000
+        : retryAfter
+          ? Date.parse(retryAfter) - Date.now()
+          : NaN;
+    const backoff = (this.options.retryBaseMs ?? 250) * 2 ** attempt;
+    const ms = Math.min(
+      this.options.maxRetryDelayMs ?? 5_000,
+      Math.max(0, Number.isFinite(requested) ? requested : backoff),
     );
-    // 不把响应正文写入错误信息，避免服务端回显请求中的敏感内容。
-    if (!response.ok) throw new ModelError(`模型请求失败：HTTP ${response.status}`);
-    // 解析工具调用、参数和 usage，避免把供应商的原始响应结构传播到 Agent 循环。
-    return parseResponse(await response.json());
+    // 一次 generate 的所有尝试与退避，共用同一个请求超时和外部取消信号。
+    try {
+      await delay(ms, undefined, { signal });
+    } catch (error) {
+      signal.throwIfAborted();
+      throw error;
+    }
   }
 }
 

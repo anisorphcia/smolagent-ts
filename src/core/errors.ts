@@ -1,6 +1,26 @@
 export class AgentError extends Error {}
 export class ToolError extends AgentError {}
-export class ModelError extends AgentError {}
+export interface ModelErrorOptions extends ErrorOptions {
+  status?: number;
+  code?: string;
+  requestId?: string;
+  retryable?: boolean;
+}
+/** 保持普通 Error 的 message/cause，同时让调用方按字段处理模型请求失败。 */
+export class ModelError extends AgentError {
+  readonly status: number | undefined;
+  readonly code: string | undefined;
+  readonly requestId: string | undefined;
+  readonly retryable: boolean;
+  constructor(message: string, options: ModelErrorOptions = {}) {
+    super(message, options);
+    this.name = "ModelError";
+    this.status = options.status;
+    this.code = options.code;
+    this.requestId = options.requestId;
+    this.retryable = options.retryable ?? false;
+  }
+}
 export class ExecutionError extends AgentError {}
 export const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
