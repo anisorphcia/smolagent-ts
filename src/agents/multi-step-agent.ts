@@ -141,7 +141,8 @@ export abstract class MultiStepAgent {
           const output = step.output!; // null 同样是合法最终答案，以标志区分是否结束。
           const finalStep = { kind: "final", output } as const;
           this.memory.append(finalStep);
-          yield finalStep;
+          // 消费方可以修改收到的步骤；输出深拷贝，避免改动内部 output 和最终结果。
+          yield structuredClone(finalStep);
           return this.result("success", output, firstStep, started);
         }
       }
@@ -172,9 +173,10 @@ export abstract class MultiStepAgent {
   ): RunResult {
     // 续聊时 memory 包含旧步骤，但本次 RunResult 仅汇总本次运行新增的步骤。
     const steps = this.memory.steps.slice(offset);
+    // 返回答案也独立复制，避免模型/执行器持有的对象在运行结束后反向改变结果。
     return {
       status,
-      output,
+      output: structuredClone(output),
       steps,
       summary: summarizeSteps(steps),
       durationMs: performance.now() - started,
