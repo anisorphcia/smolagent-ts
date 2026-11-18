@@ -1,0 +1,101 @@
+# smolagent-ts
+
+参考 `smolagents` 的 Python 源码，以 TypeScript 重新组织核心架构。目标是让你能沿着“任务 → 模型 → 动作 → 观察 → 下一步”的调用链阅读和运行代码。
+
+它实现 Python 版的核心执行机制，不宣称兼容全部 Python API；完整对应与边界见 [迁移对照](docs/PYTHON-MAPPING.md)。
+
+## 先运行
+
+需要 Node.js ≥ 22.18，使用 ESM 和严格 TypeScript。源码可由 Node 直接擦除类型后运行，构建产物是普通 JavaScript。
+
+```bash
+cd smolagent-ts
+npm ci
+npm run demo          # 工具调用：6 × 7 → 42，无需 API Key
+npm run demo:code     # 代码执行：调用工具 → state 保存 → 下一步提交
+npm run demo:managed  # 父 Agent 通过工具调用子 Agent
+npm run check        # 严格类型检查 + 行为测试
+npm run build        # 生成 dist 中的 JS、类型声明和 sourcemap
+node dist/examples/02-code-agent.js
+```
+
+真实模型：复制 `.env.example` 为 `.env`，填写 `MODEL_API_KEY`、`MODEL_ID`，按服务提供方配置 `MODEL_BASE_URL`，然后执行 `npm run demo:live`。真实调用可能产生服务商费用；默认示例和测试全部离线。
+
+```bash
+npm run cli -- --demo
+npm run cli -- --demo --code
+npm run cli -- "用工具计算 (6 + 7) × 8"
+```
+
+## 目录与阅读路线
+
+```text
+src/
+  core/          JSON 边界、错误类型、取消等待
+  tools/         工具定义、Schema 校验、注册表、默认工具、子 Agent 工具
+  models/        消息协议、Model 接口、离线模型、HTTP 适配器
+  memory/        步骤类型与模型上下文投影
+  agents/        共享循环、工具调用策略、代码执行策略
+  executors/     CodeExecutor 接口与 QuickJS 实现
+  prompts/       与策略配套的提示词
+  monitoring/    步数、错误数、token 汇总
+  index.ts       对外 API
+  cli.ts         命令行入口
+examples/        4 个完整示例
+tests/           离线行为验证
+docs/            架构、逐步阅读、Python 对照和扩展规划
+```
+
+建议按以下顺序阅读：
+
+1. [examples/01-tool-calling.ts](examples/01-tool-calling.ts)：先看一次完整运行，认识输入和结果。
+2. [src/tools/tool.ts](src/tools/tool.ts)：理解工具如何描述、校验和执行。
+3. [src/models/model.ts](src/models/model.ts)：明确模型的统一输入输出。
+4. [src/memory/steps.ts](src/memory/steps.ts) 与 [agent-memory.ts](src/memory/agent-memory.ts)：理解运行历史如何变成模型上下文。
+5. [src/agents/multi-step-agent.ts](src/agents/multi-step-agent.ts)：重点阅读 `stream()`，这是整个项目的主干。
+6. [src/agents/tool-calling-agent.ts](src/agents/tool-calling-agent.ts)：只负责一次结构化工具动作。
+7. [src/agents/code-agent.ts](src/agents/code-agent.ts) 与 [QuickJS 执行器](src/executors/quickjs-executor.ts)：理解两种策略如何共用主干。
+8. [src/models/openai-model.ts](src/models/openai-model.ts)：最后看真实服务的协议适配。
+
+进一步阅读：[架构与关键取舍](docs/ARCHITECTURE.md) · [跟踪一次执行](docs/READING-GUIDE.md) · [Python 源码映射与规划](docs/PYTHON-MAPPING.md)。
+
+## 最小用法
+
+```ts
+import {
+  ToolCallingAgent, ScriptedModel, calculatorTool, toolReply,
+} from "./src/index.ts";
+
+const agent = new ToolCallingAgent({
+  tools: [calculatorTool],
+  model: new ScriptedModel([
+    toolReply("calculate", { operation: "multiply", a: 6, b: 7 }),
+    toolReply("final_answer", { answer: 42 }),
+  ]),
+  maxSteps: 4,
+});
+
+const result = await agent.run("计算 6 × 7");
+console.log(result.status, result.output); // success 42
+console.log(result.summary);              // 步数、错误数、usage
+```
+
+这里的 `ScriptedModel` 用预设回复替代真实 LLM，让你不用网络也能观察 Agent。示例 01 还展示了读取实际工具观察生成下一条回复的写法。
+
+## 已实现的行为
+
+- `ToolCallingAgent`、`CodeAgent` 共用多步循环、步数预算和最终答案校验。
+- 参数校验、工具查找、多个调用的顺序执行和错误恢复。
+- `final_answer` 显式结束；普通文本不会误判为成功，`null` 也可作为合法答案。
+- 任务、规划、动作、答案的类型化记忆；支持 `reset: false` 续聊。
+- `AsyncGenerator` 按步骤输出；`run()` 消费同一生成器并返回结果。
+- 周期规划、父子 Agent 编排、取消与运行超时、并发保护。
+- QuickJS 执行生成的 JavaScript，JSON `state` 跨动作保存。
+- Chat Completions 兼容服务适配、token 使用量与运行摘要、CLI。
+- 记忆 JSON 导出 `agent.memory.toJSON()`，用于检查和存档。
+
+运行耗尽预算时返回 `status: "max_steps"`、`output: null`；调用方应先检查状态。模型或网络故障、外部取消直接抛出错误，不会伪装成工具观察。`usage: null` 表示统计所需数据不完整。
+
+代码 Agent 的宿主是 TypeScript，模型动作是 JavaScript。工具在动作里以同步形式调用，例如 `tools.calculate({...})`；Asyncify 在内部等待宿主异步工具。请遵循提示词约定，不使用 async/await。跨步骤的数据放在 `state`，局部变量只属于当前动作。
+
+当前没有迁移 Gradio、浏览器自动化、多模态、Python 解释器语法、远程执行平台、Hub 发布或所有供应商 SDK。后续可以通过现有的 `Model`、`Tool`、`CodeExecutor` 接口逐项接入。

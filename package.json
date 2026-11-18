@@ -1,0 +1,24 @@
+{
+  "name": "smolagent-ts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Readable TypeScript reconstruction of the smolagents core",
+  "engines": { "node": ">=22.18.0" },
+  "exports": { ".": { "types": "./dist/src/index.d.ts", "import": "./dist/src/index.js" } },
+  "bin": { "smolagent-ts": "./dist/src/cli.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test",
+    "demo": "node examples/01-tool-calling.ts",
+    "demo:code": "node examples/02-code-agent.ts",
+    "demo:managed": "node examples/03-managed-agent.ts",
+    "demo:live": "node --env-file-if-exists=.env examples/04-live-model.ts",
+    "demo:code:live": "node --env-file-if-exists=.env examples/05-code-agent-live.ts",
+    "cli": "node --env-file-if-exists=.env src/cli.ts"
+  },
+  "dependencies": { "quickjs-emscripten": "0.32.0" },
+  "devDependencies": { "@types/node": "24.13.3", "typescript": "7.0.2" }
+}
