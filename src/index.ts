@@ -4,6 +4,7 @@ export { ToolCallingAgent } from "./agents/tool-calling-agent.ts";
 export { CodeAgent } from "./agents/code-agent.ts";
 export type { CodeAgentOptions } from "./agents/code-agent.ts";
 export { AgentMemory } from "./memory/agent-memory.ts";
+export type { ContextOptions } from "./memory/context-window.ts";
 export type {
   MemoryStep,
   ActionStep,

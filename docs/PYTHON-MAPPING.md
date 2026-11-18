@@ -44,7 +44,8 @@
 | `mcp_client.py` | 未实现 | 将 MCP 工具包装为 `Tool`；新增传输生命周期模块 |
 | `remote_executors.py` 的 Docker/E2B/Modal/Blaxel | 未实现 | 实现 `CodeExecutor`，把资源清理纳入执行器契约 |
 | `models.py` 的 HF/Bedrock/Azure/Transformers 等 | 未实现专用适配器 | 实现 `Model`；兼容 Chat Completions 的服务可先配置 baseUrl |
-| token SSE 流、模型重试和上下文裁剪 | 未实现 | 模型装饰器与流接口，避免把服务商细节加进循环 |
+| token SSE 流 | 未实现 | 扩展模型流接口，保持 token 增量与完整步骤的区别 |
+| 模型重试和上下文裁剪 | 已实现有限版本 | 可选 HTTP 有限重试；按内部消息 JSON 字符预算保留完整消息组并附旧步骤简要记录 |
 | `agent_types.py` 的图像/音频 | 未实现 | 先扩展消息和工具输出协议，再接模型与 UI |
 | `default_tools.py` 的搜索/网页/语音工具 | 未实现 | 用 `defineTool` 注册，可独立验证和替换 |
 | `serialization.py` 的完整持久化、Hub 加载 | 未实现 | 独立版本化数据协议；不要直接反序列化可执行代码 |
@@ -55,7 +56,7 @@
 
 当前交付的工具、模型、记忆、两种策略、执行器、规划、子 Agent、CLI 和离线验证构成可运行的核心版本。后续建议依次扩展：
 
-1. 模型层的重试、SSE token 流、上下文窗口管理。
+1. 模型层的 SSE token 流、精确 token 上下文预算与更完整的摘要策略。
 2. 工具层的文件读取、搜索、MCP 接入。
 3. 执行层的 Worker 与远程执行器、运行生命周期契约。
 4. 消息层的多模态，再增加应用 UI 和观测界面。

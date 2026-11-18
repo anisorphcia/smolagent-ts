@@ -8,6 +8,7 @@ export interface CliOptions {
   timeoutMs: number;
   maxRetries: number;
   planningInterval?: number;
+  contextChars?: number;
 }
 
 const numericFlags = {
@@ -15,6 +16,7 @@ const numericFlags = {
   "--timeout-ms": "timeoutMs",
   "--planning-interval": "planningInterval",
   "--max-retries": "maxRetries",
+  "--context-chars": "contextChars",
 } as const;
 
 export function parseCliArgs(args: readonly string[]): CliOptions {
@@ -75,4 +77,5 @@ export const cliHelp = `用法：npm run cli -- [选项] "任务"
 --planning-interval N   每 N 轮动作前规划，首次动作前也规划
 --timeout-ms N          总运行超时，默认 120000
 --max-retries N         模型暂时性错误的额外重试次数，0 到 5，默认 0
+--context-chars N       模型消息 JSON 的字符预算，默认不裁剪
 --                      后续内容全部作为任务`;

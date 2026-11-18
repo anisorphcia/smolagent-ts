@@ -44,6 +44,7 @@ async function main(): Promise<void> {
     ...(options.planningInterval !== undefined
       ? { planningInterval: options.planningInterval }
       : {}),
+    ...(options.contextChars !== undefined ? { context: { maxChars: options.contextChars } } : {}),
   };
   const agent = options.code ? new CodeAgent(config) : new ToolCallingAgent(config);
   const lifecycle = new AbortController();

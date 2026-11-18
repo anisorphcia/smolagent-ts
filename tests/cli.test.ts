@@ -13,6 +13,7 @@ test("CLI 校验数值配置并支持 -- 后的完整任务", () => {
     ["--max-steps", "1.5"],
     ["--planning-interval"],
     ["--max-retries", "6"],
+    ["--context-chars", "0"],
     ["--unknown"],
   ])
     assert.throws(() => parseCliArgs(args));
@@ -39,7 +40,16 @@ test("两种 Agent 的 CLI 流输出模型进度、工具事件、步骤和最�
   for (const mode of [[], ["--code"]]) {
     const { stdout } = await exec(
       process.execPath,
-      ["src/cli.ts", "--demo", "--stream", "--planning-interval", "1", ...mode],
+      [
+        "src/cli.ts",
+        "--demo",
+        "--stream",
+        "--planning-interval",
+        "1",
+        "--context-chars",
+        "5000",
+        ...mode,
+      ],
       { cwd, timeout: 10_000 },
     );
     const events = stdout

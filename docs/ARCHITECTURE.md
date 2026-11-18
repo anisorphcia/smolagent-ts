@@ -23,15 +23,15 @@ flowchart TD
   Tool --> Business["实际工具能力<br/>calculate / 自定义工具 / 子 Agent"]
 ```
 
-| 标号            | 负责什么                                                                     | 阅读入口                                                  |
-| --------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------- |
-| ① 共享循环     | 注册工具、初始化记忆；在运行时控制规划、动作轮数、步骤流和退出               | [multi-step-agent.ts](../src/agents/multi-step-agent.ts)     |
-| ② 记忆         | 保存步骤快照；`toMessages()` 生成后续模型调用的上下文                      | [agent-memory.ts](../src/memory/agent-memory.ts)             |
-| ③ 代码策略     | 每轮请求模型生成代码，解析唯一代码块，执行并反馈                             | [code-agent.ts](../src/agents/code-agent.ts)                 |
-| ④ 工具调用策略 | 每轮请求模型生成结构化工具调用，按序执行并回传对应调用 ID                    | [tool-calling-agent.ts](../src/agents/tool-calling-agent.ts) |
-| ⑤ 模型适配     | 将统一消息转为 HTTP 请求，再将响应转回文本、工具调用和 usage                 | [openai-model.ts](../src/models/openai-model.ts)             |
-| ⑥ 代码执行器   | 新建 QuickJS 环境，注入 `state`、工具、日志和提交答案函数，执行后导出 JSON | [quickjs-executor.ts](../src/executors/quickjs-executor.ts)  |
-| ⑦ 工具注册表   | `definitions()` 提供工具描述；`call()` 查找具体工具并进入业务逻辑        | [tool.ts](../src/tools/tool.ts)                              |
+| 标号 | 负责什么 | 阅读入口 |
+| --- | --- | --- |
+| ① 共享循环 | 注册工具、初始化记忆；在运行时控制规划、动作轮数、步骤流和退出 | [multi-step-agent.ts](../src/agents/multi-step-agent.ts) |
+| ② 记忆 | 保存步骤快照；`toMessages()` 生成后续模型调用的上下文 | [agent-memory.ts](../src/memory/agent-memory.ts) |
+| ③ 代码策略 | 每轮请求模型生成代码，解析唯一代码块，执行并反馈 | [code-agent.ts](../src/agents/code-agent.ts) |
+| ④ 工具调用策略 | 每轮请求模型生成结构化工具调用，按序执行并回传对应调用 ID | [tool-calling-agent.ts](../src/agents/tool-calling-agent.ts) |
+| ⑤ 模型适配 | 将统一消息转为 HTTP 请求，再将响应转回文本、工具调用和 usage | [openai-model.ts](../src/models/openai-model.ts) |
+| ⑥ 代码执行器 | 新建 QuickJS 环境，注入 `state`、工具、日志和提交答案函数，执行后导出 JSON | [quickjs-executor.ts](../src/executors/quickjs-executor.ts) |
+| ⑦ 工具注册表 | `definitions()` 提供工具描述；`call()` 查找具体工具并进入业务逻辑 | [tool.ts](../src/tools/tool.ts) |
 
 模型不访问工具实现；它只接收消息和工具描述。执行器不访问模型；它只接收代码、工具注册表、状态和取消信号。工具不需要知道调用方是哪一种 Agent。记忆不请求模型，也不执行工具。
 
@@ -80,21 +80,34 @@ flowchart TD
 
 以“计算 `(6 + 7) × 8`，保存结果，再在下一步提交答案”为例：
 
-| 阶段        | 本轮内容                                                                     | 保留或输出什么                                                                 |
-| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 任务        | 记录用户输入                                                                 | memory 追加 task，输出 `TaskStep`                                            |
-| 第 1 轮 LLM | 返回包含 `state.result = (6 + 7) * 8; console.log(state.result);` 的代码块 | 提取纯代码交给执行器                                                           |
-| 第 1 轮执行 | QuickJS 计算并记录日志                                                       | `state.result` 导出为 `104`，日志成为模型可见观察，`isFinalAnswer:false` |
-| 第 2 轮 LLM | 读取上轮消息与观察，返回包含 `final_answer(state.result);` 的代码块        | 再次提取本轮代码                                                               |
-| 第 2 轮执行 | 新 QuickJS 环境恢复 `state.result = 104`，捕获答案提交                     | Agent 验收后设置 `step.output = 104`、`step.isFinalAnswer = true`          |
-| 结束        | 共享循环判断完成                                                             | 输出 action、final，返回成功的 `RunResult`                                   |
+| 阶段 | 本轮内容 | 保留或输出什么 |
+| --- | --- | --- |
+| 任务 | 记录用户输入 | memory 追加 task，输出 `TaskStep` |
+| 第 1 轮 LLM | 返回包含 `state.result = (6 + 7) * 8; console.log(state.result);` 的代码块 | 提取纯代码交给执行器 |
+| 第 1 轮执行 | QuickJS 计算并记录日志 | `state.result` 导出为 `104`，日志成为模型可见观察，`isFinalAnswer:false` |
+| 第 2 轮 LLM | 读取上轮消息与观察，返回包含 `final_answer(state.result);` 的代码块 | 再次提取本轮代码 |
+| 第 2 轮执行 | 新 QuickJS 环境恢复 `state.result = 104`，捕获答案提交 | Agent 验收后设置 `step.output = 104`、`step.isFinalAnswer = true` |
+| 结束 | 共享循环判断完成 | 输出 action、final，返回成功的 `RunResult` |
+
+### 为什么每轮都是 `blocks[0][1]`
+
+模型和系统提示词约定的是“每轮只返回一个 javascript 围栏代码块”；数组结构由本地正则匹配产生：
+
+```ts
+const blocks = [...response.message.content.matchAll(/```(?:javascript|js)\s*\n([\s\S]*?)```/g)];
+// blocks[0]：本轮第一个代码块的匹配结果。
+// blocks[0][0]：完整匹配，包含 Markdown 围栏。
+// blocks[0][1]：第一个捕获组，也就是围栏内部的纯代码。
+```
+
+每轮重新请求模型、重新创建 `blocks`，因此两轮都取 `[0][1]`，内容却不同。匹配结果上的 `index` 属性表示代码块在原始回答中的起始字符位置，与数组下标无关。没有或存在多个代码块时会生成错误反馈，让下一轮修正格式。
 
 ### memory 与 state 的区别
 
-| 对象                | 保存什么                                               | 谁使用                                               |
-| ------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| `AgentMemory`     | 用户任务、计划、模型消息、执行观察、最终答案等步骤记录 | 调度层保存历史，模型通过 `toMessages()` 获取上下文 |
-| `CodeAgent.state` | 代码显式写入的 JSON 值，如 `{ result: 104 }`         | 执行器跨动作恢复数据，供下一轮代码访问               |
+| 对象 | 保存什么 | 谁使用 |
+| --- | --- | --- |
+| `AgentMemory` | 用户任务、计划、模型消息、执行观察、最终答案等步骤记录 | 调度层保存历史，模型通过 `toMessages()` 获取上下文 |
+| `CodeAgent.state` | 代码显式写入的 JSON 值，如 `{ result: 104 }` | 执行器跨动作恢复数据，供下一轮代码访问 |
 
 模型不会直接读取执行器内存或 `state` 对象。它依据历史代码和反馈继续生成代码；执行器负责将实际 JSON 值传给下一轮。`const`、`let` 等局部变量属于当轮解释器，不会跨轮自动保留。
 
@@ -135,18 +148,20 @@ unknown → schema 校验 → parse 缩窄成 Input → execute → JSON 输出�
 
 `run(task)` 默认清空记忆；`run(task, {reset: false})` 续接同一会话。返回结果只包含本轮新增步骤，`agent.memory.steps` 则包含完整会话。`CodeAgent` 在默认重置时也清空 `state`。
 
+可选 `context.maxChars` 只限制模型消息投影：系统提示、当前任务、最新动作及刚生成的计划保留，旧动作按完整消息组移除，并在空间允许时添加简要记录或自定义同步摘要。完整步骤、工具轨迹和代码 state 不受裁剪影响；规划附加提示也计入预算。预算按内部消息 JSON 字符数计量，必要消息无法容纳时在请求模型前报错。
+
 步骤流不等于 token 流。这里的 `stream()` 在任务、规划、动作和答案完成时产出，不实现服务端 SSE token 流。提前 `break` 会关闭生成器并释放运行锁；手动调用 `next()` 的使用者也应在放弃流时调用 `return()`。
 
 ## 错误与终止
 
-| 情况                                   | 行为                                       |
-| -------------------------------------- | ------------------------------------------ |
+| 情况 | 行为 |
+| --- | --- |
 | 参数错误、未知工具、代码语法或执行错误 | 记录观察，消耗一个动作预算，允许下一步修正 |
-| 最终答案校验不通过                     | 反馈给模型，继续执行                       |
-| 模型网络错误或无效模型响应             | 直接抛出，交给应用处理                     |
-| 外部取消、运行总超时                   | 中止等待并抛出原始原因                     |
-| 预算耗尽                               | 返回 `max_steps`，不追加兜底模型调用     |
-| 候选答案通过校验                       | 记录 final，返回 `success`               |
+| 最终答案校验不通过 | 反馈给模型，继续执行 |
+| 模型网络错误或无效模型响应 | 直接抛出，交给应用处理 |
+| 外部取消、运行总超时 | 中止等待并抛出原始原因 |
+| 预算耗尽 | 返回 `max_steps`，不追加兜底模型调用 |
+| 候选答案通过校验 | 记录 final，返回 `success` |
 
 批次里的 `final_answer` 必须独立提交，避免其他工具在最终提交之后继续运行。一般工具按序调用；一个调用失败后，批次中的其他普通调用仍会执行，每个调用都得到对应的 tool response。
 

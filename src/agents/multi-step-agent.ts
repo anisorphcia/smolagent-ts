@@ -1,6 +1,8 @@
 import type { JsonValue } from "../core/json.ts";
 import { AgentError, abortable, errorMessage } from "../core/errors.ts";
 import { AgentMemory } from "../memory/agent-memory.ts";
+import { validateContextOptions } from "../memory/context-window.ts";
+import type { ContextOptions } from "../memory/context-window.ts";
 import type { ActionStep, MemoryStep, PlanningStep } from "../memory/steps.ts";
 import type { GenerateOptions, Model, ModelResponse, ChatMessage } from "../models/model.ts";
 import { summarizeSteps } from "../monitoring/run-summary.ts";
@@ -20,6 +22,7 @@ export interface AgentOptions {
     answer: JsonValue,
     memory: AgentMemory,
   ) => boolean | Promise<boolean>)[];
+  context?: ContextOptions;
 }
 export type AgentEvent =
   | { type: "model_start"; callNumber: number; phase: "planning" | "action" }
@@ -67,6 +70,7 @@ export abstract class MultiStepAgent {
       if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} 必须是正整数`);
     }
     this.options = options;
+    if (options.context) validateContextOptions(options.context);
     this.model = options.model;
     // 构造 Agent 时注册一次工具，并自动加入提交答案的工具；不是每轮重新注册。
     // protected 属性由子类继承，所以子类可以直接使用 this.tools / this.model。
@@ -91,7 +95,7 @@ export abstract class MultiStepAgent {
     tools?: readonly ToolDefinition[],
   ): Promise<ModelResponse> {
     return this.requestModel(
-      this.memory.toMessages(),
+      this.memory.toMessages(this.options.context),
       { signal, ...(tools ? { tools } : {}) },
       "action",
     );
@@ -255,7 +259,7 @@ export abstract class MultiStepAgent {
     const startedAt = Date.now();
     // 读取现有任务与观察来更新计划；这里只生成文字，不在规划请求中执行工具。
     const response = await this.requestModel(
-      [...this.memory.toMessages(), { role: "user", content: planningPrompt }],
+      this.memory.toMessages(this.options.context, [{ role: "user", content: planningPrompt }]),
       { signal },
       "planning",
     );
